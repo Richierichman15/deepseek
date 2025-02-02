@@ -1,58 +1,73 @@
 import * as vscode from 'vscode';
-import axios from 'axios';
+import axios from 'axios'; // Import Axios for HTTP requests
+// Import your local model library here
+// import { loadModel, predict } from 'your-local-model-library';
 
 export function activate(context: vscode.ExtensionContext) {
     let disposable = vscode.commands.registerCommand('deepseek-helper.askDeepSeek', async () => {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            vscode.window.showErrorMessage('No active editor found.');
-            return;
-        }
+        const panel = vscode.window.createWebviewPanel(
+            'deepseekChat',
+            'DeepSeek Chat',
+            vscode.ViewColumn.One,
+            {}
+        );
 
-        const selection = editor.selection;
-        const selectedText = editor.document.getText(selection);
+        panel.webview.html = getWebviewContent();
 
-        if (!selectedText) {
-            vscode.window.showErrorMessage('No text selected.');
-            return;
-        }
+        // Load your local model here
+        // const model = await loadModel('path/to/your/model');
 
-        const userInput = await vscode.window.showInputBox({
-            placeHolder: 'Enter your question or prompt for DeepSeek...',
+        panel.webview.onDidReceiveMessage(async message => {
+            switch (message.command) {
+                case 'sendMessage':
+                    try {
+                        // Send a request to the Ollama server
+                        const response = await axios.post('http://localhost:11434/generate', {
+                            prompt: message.text,
+                            // Add any other parameters required by your model
+                        });
+
+                        // Extract the generated text from the response
+                        const responseText = response.data.text; // Adjust based on the actual response structure
+                        panel.webview.postMessage({ command: 'receiveMessage', text: responseText });
+                    } catch (error) {
+                        console.error('Error communicating with Ollama:', error);
+                        panel.webview.postMessage({ command: 'receiveMessage', text: 'Error generating response.' });
+                    }
+                    return;
+            }
         });
-
-        if (!userInput) {
-            return;
-        }
-
-        try {
-            const response = await axios.post(
-                'https://api.deepseek.com', 
-                {
-                    prompt: `${selectedText}\n\n${userInput}`,
-                    max_tokens: 150,
-                },
-                {
-                    headers: {
-                        'Authorization': `Bearer sk-d5ffdc7c5eae4b4586cc2b45070d4897`, 
-                        'Content-Type': 'application/json',
-                    },
-                }
-            );
-
-            const output = response.data.choices[0].text; 
-            const document = await vscode.workspace.openTextDocument({
-                content: output,
-                language: editor.document.languageId,
-            });
-            vscode.window.showTextDocument(document);
-        } catch (error) {
-            vscode.window.showErrorMessage('Failed to call DeepSeek API. Check your API key and network connection.');
-            console.error(error);
-        }
     });
 
     context.subscriptions.push(disposable);
+}
+
+// Function to generate the HTML content for the webview
+function getWebviewContent() {
+    return `<!DOCTYPE html>
+    <html lang="en">
+    <body>
+        <h1>DeepSeek Chat</h1>
+        <textarea id="input" rows="4" cols="50" placeholder="Type your message here..."></textarea>
+        <button id="send">Send</button>
+        <div id="output"></div>
+        <script>
+            const vscode = acquireVsCodeApi();
+            document.getElementById('send').onclick = () => {
+                const input = document.getElementById('input').value;
+                vscode.postMessage({ command: 'sendMessage', text: input });
+                document.getElementById('input').value = '';
+            };
+            window.addEventListener('message', event => {
+                const message = event.data;
+                if (message.command === 'receiveMessage') {
+                    const output = document.getElementById('output');
+                    output.innerHTML += '<p>' + message.text + '</p>';
+                }
+            });
+        </script>
+    </body>
+    </html>`;
 }
 
 export function deactivate() {}
